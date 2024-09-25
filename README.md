@@ -12,7 +12,7 @@ The webpage will be available at:
 This project is divided into two parts:
 
 1. Database and Scripting:
-   - A PHP script that fetches Alko's price list and currency conversion rates and updates the database daily at `6:00 UTC`.
+   - A PHP script that fetches Alko's price list and currency conversion rates and updates the database daily at `1:00 UTC`.
 2. AJAX-based Frontend:
    - A simple front-end interface to display the product list, allowing users to add and clear order amounts, all via AJAX.
 
