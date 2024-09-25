@@ -1,0 +1,20 @@
+{
+  "name": "kuivalainen/draivi-task",
+  "version": "1.0.0",
+  "description": "Soluton for Draivi technical interview",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Denis Kuivalainen",
+      "homepage": "https://www.linkedin.com/in/denis-kuivalainen/"
+    }
+  ],
+  "require": {
+    "bref/bref": "^2.3",
+    "phpoffice/phpspreadsheet": "^2.2",
+    "aws/aws-sdk-php": "^3.322"
+  },
+  "scripts": {
+    "dev": "sh deploy.sh dev eu-central-1"
+  }
+}

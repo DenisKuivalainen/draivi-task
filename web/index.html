@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Product List</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  </head>
+  <body>
+    <div>
+      <button id="listButton">List</button>
+      <button id="emptyButton">Empty</button>
+
+      <table id="productTable" style="display: none">
+        <thead>
+          <tr>
+            <th>Number</th>
+            <th>Name</th>
+            <th>Bottle Size</th>
+            <th>Price (EUR)</th>
+            <th>Price (GBP)</th>
+            <th>Order Amount</th>
+            <th></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="productBody"></tbody>
+      </table>
+    </div>
+
+    <script>
+      $(document).ready(function () {
+        let products = [];
+        let loading = false;
+
+        const beUrl =
+          "https://tcbb4q2t40.execute-api.eu-central-1.amazonaws.com/dev";
+
+        function setLoading(state) {
+          loading = state;
+          $("#listButton, #emptyButton").prop("disabled", loading);
+        }
+
+        async function list() {
+          setLoading(true);
+          await _list();
+          setLoading(false);
+        }
+
+        function _list() {
+          return $.get(`${beUrl}/product`, function (res) {
+            if (res.ok) {
+              products = res.data.map(function (d) {
+                return { ...d, orderamount: Number(d.orderamount) };
+              });
+              renderTable();
+            }
+          });
+        }
+
+        function empty() {
+          products = [];
+          renderTable();
+        }
+
+        function changeOrderAmount(numberId, newAmount) {
+          return $.ajax({
+            url: `${beUrl}/product/${numberId}?amount=${newAmount}`,
+            method: "PUT",
+            success: function (res) {
+              if (res.ok) {
+                list();
+              }
+            },
+          });
+        }
+
+        function add(product) {
+          changeOrderAmount(product.number, product.orderamount + 1);
+        }
+
+        function clear(product) {
+          changeOrderAmount(product.number, 0);
+        }
+
+        function renderTable() {
+          let tbody = $("#productBody");
+          tbody.empty();
+
+          if (products.length > 0) {
+            $("#productTable").show();
+            products.forEach(function (p) {
+              const row = `
+                <tr>
+                  <td>${p.number}</td>
+                  <td>${p.name}</td>
+                  <td>${p.bottlesize}</td>
+                  <td>${p.price}</td>
+                  <td>${p.price_gbp}</td>
+                  <td>${p.orderamount}</td>
+                  <td><button class="addButton" data-number="${p.number}">Add</button></td>
+                  <td><button class="clearButton" data-number="${p.number}">Clear</button></td>
+                </tr>`;
+              tbody.append(row);
+            });
+          } else {
+            $("#productTable").hide();
+          }
+        }
+
+        $(document).on("click", ".addButton", function () {
+          if (loading) return;
+          const productId = `${$(this).data("number")}`;
+          const product = products.find((p) => p.number === productId);
+          add(product);
+        });
+
+        $(document).on("click", ".clearButton", function () {
+          if (loading) return;
+          const productId = `${$(this).data("number")}`;
+          const product = products.find((p) => p.number === productId);
+          clear(product);
+        });
+
+        $("#listButton").click(list);
+        $("#emptyButton").click(empty);
+      });
+    </script>
+  </body>
+</html>

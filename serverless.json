@@ -1,0 +1,466 @@
+{
+  "service": "draivi-task",
+  "provider": {
+    "name": "aws",
+    "region": "eu-central-1",
+    "runtime": "php-83",
+    "stage": "${opt:stage, self:custom.defaultStage}",
+    "tags": {
+      "stage": "${opt:stage, self:custom.defaultStage}"
+    },
+    "apiGateway": {
+      "minimumCompressionSize": 1024,
+      "shouldStartNameWithService": true
+    },
+    "memorySize": 256,
+    "timeout": 30,
+    "vpc": {
+      "securityGroupIds": [
+        {
+          "Ref": "DraiviLambdaSecurityGroup"
+        }
+      ],
+      "subnetIds": [
+        {
+          "Ref": "DraiviPrivateSubnet1"
+        },
+        {
+          "Ref": "DraiviPrivateSubnet2"
+        }
+      ]
+    },
+    "iam": {
+      "role": "DraiviRole"
+    },
+    "environment": {
+      "REGION": "${self:provider.region}",
+      "DB_CREDENTIALS_SECRET_ARN": {
+        "Fn::GetAtt": ["DraiviRDSInstance", "MasterUserSecret.SecretArn"]
+      },
+      "DB_URL": {
+        "Fn::GetAtt": ["DraiviRDSInstance", "Endpoint.Address"]
+      },
+      "DB_NAME": "${self:provider.stage}Draivi",
+      "ALKO_PRICES_URL": "${self:custom.alkoUrl}",
+      "CURRENCY_URL": "${self:custom.currencyUrl}",
+      "CURRENCY_APIKEY": "${self:custom.currencyApikey}",
+      "WEB_BUCKET_NAME": "${self:custom.webBucketName}",
+      "WEBPAGE_URL": {
+        "Fn::GetAtt": ["DraiviStaticWebsiteBucket", "WebsiteURL"]
+      },
+      "API_GW_URL": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "ApiGatewayRestApi"
+            },
+            ".execute-api.${self:provider.region}.amazonaws.com/${self:provider.stage}"
+          ]
+        ]
+      }
+    }
+  },
+  "plugins": ["./vendor/bref/bref"],
+
+  "custom": {
+    "defaultStage": "dev",
+    "alkoUrl": "${ssm:/draivi/alko/url}",
+    "currencyUrl": "${ssm:/draivi/currency/url}",
+    "currencyApikey": "${ssm:/draivi/currency/apikey}",
+    "webBucketName": "${self:provider.stage}-draivi-static-website-bucket"
+  },
+
+  "functions": {
+    "health": {
+      "handler": "src/functions/health.php",
+      "events": [
+        {
+          "http": {
+            "method": "GET",
+            "path": "health",
+            "cors": true
+          }
+        }
+      ]
+    },
+    "migration": {
+      "handler": "src/functions/migration.php"
+    },
+    "fetch-daily-data": {
+      "handler": "src/functions/fetchDailyData.php",
+      "memorySize": 1024,
+      "timeout": 600,
+      "events": [
+        {
+          "schedule": {
+            "rate": "cron(0 6 * * ? *)",
+            "enabled": true
+          }
+        }
+      ]
+    },
+    "list-products": {
+      "handler": "src/functions/listProducts.php",
+      "events": [
+        {
+          "http": {
+            "method": "GET",
+            "path": "product",
+            "cors": true
+          }
+        }
+      ]
+    },
+    "update-order-amount": {
+      "handler": "src/functions/updateOrderAmount.php",
+      "events": [
+        {
+          "http": {
+            "method": "PUT",
+            "path": "product/{number}",
+            "cors": true
+          }
+        }
+      ]
+    }
+  },
+  "package": {
+    "patterns": ["!tests/**"]
+  },
+
+  "resources": {
+    "Resources": {
+      "DraiviRole": {
+        "Type": "AWS::IAM::Role",
+        "Properties": {
+          "RoleName": "${self:provider.stage}-draiviRole",
+          "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": ["lambda.amazonaws.com"]
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          },
+          "Policies": [
+            {
+              "PolicyName": "${self:provider.stage}-draiviPolicy",
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "rds:*",
+                      "secretsmanager:*",
+                      "ec2:*",
+                      "logs:*",
+                      "s3:*"
+                    ],
+                    "Resource": ["*"]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "DraiviVPC": {
+        "Type": "AWS::EC2::VPC",
+        "Properties": {
+          "CidrBlock": "10.0.0.0/16"
+        }
+      },
+      "DraiviPublicSubnet1": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "CidrBlock": "10.0.0.0/24",
+          "AvailabilityZone": {
+            "Fn::Select": [0, { "Fn::GetAZs": "" }]
+          },
+          "MapPublicIpOnLaunch": true
+        }
+      },
+      "DraiviPublicSubnet2": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "CidrBlock": "10.0.1.0/24",
+          "AvailabilityZone": {
+            "Fn::Select": [1, { "Fn::GetAZs": "" }]
+          },
+          "MapPublicIpOnLaunch": true
+        }
+      },
+      "DraiviPrivateSubnet1": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "CidrBlock": "10.0.2.0/24",
+          "AvailabilityZone": {
+            "Fn::Select": [0, { "Fn::GetAZs": "" }]
+          }
+        }
+      },
+      "DraiviPrivateSubnet2": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "CidrBlock": "10.0.3.0/24",
+          "AvailabilityZone": {
+            "Fn::Select": [1, { "Fn::GetAZs": "" }]
+          }
+        }
+      },
+      "DraiviInternetGateway": {
+        "Type": "AWS::EC2::InternetGateway",
+        "Properties": {}
+      },
+      "DraiviVpcGatewayAttachment": {
+        "Type": "AWS::EC2::VPCGatewayAttachment",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "InternetGatewayId": { "Ref": "DraiviInternetGateway" }
+        }
+      },
+      "DraiviPublicRouteTable": {
+        "Type": "AWS::EC2::RouteTable",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" }
+        }
+      },
+      "DraiviPrivateRouteTable": {
+        "Type": "AWS::EC2::RouteTable",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" }
+        }
+      },
+      "DraiviPublicRoute": {
+        "Type": "AWS::EC2::Route",
+        "Properties": {
+          "RouteTableId": { "Ref": "DraiviPublicRouteTable" },
+          "DestinationCidrBlock": "0.0.0.0/0",
+          "GatewayId": { "Ref": "DraiviInternetGateway" }
+        }
+      },
+      "DraiviNatGateway": {
+        "Type": "AWS::EC2::NatGateway",
+        "Properties": {
+          "SubnetId": { "Ref": "DraiviPublicSubnet1" },
+          "AllocationId": {
+            "Fn::GetAtt": ["DraiviEIP", "AllocationId"]
+          }
+        }
+      },
+      "DraiviEIP": {
+        "Type": "AWS::EC2::EIP",
+        "Properties": {
+          "Domain": "vpc"
+        }
+      },
+      "DraiviPrivateSubnet1RouteTableAssociation": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": { "Ref": "DraiviPrivateSubnet1" },
+          "RouteTableId": { "Ref": "DraiviPrivateRouteTable" }
+        }
+      },
+      "DraiviPrivateSubnet2RouteTableAssociation": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": { "Ref": "DraiviPrivateSubnet2" },
+          "RouteTableId": { "Ref": "DraiviPrivateRouteTable" }
+        }
+      },
+      "DraiviPrivateRoute": {
+        "Type": "AWS::EC2::Route",
+        "Properties": {
+          "RouteTableId": { "Ref": "DraiviPrivateRouteTable" },
+          "DestinationCidrBlock": "0.0.0.0/0",
+          "NatGatewayId": { "Ref": "DraiviNatGateway" }
+        }
+      },
+      "DraiviPublicSubnet1RouteTableAssociation": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": { "Ref": "DraiviPublicSubnet1" },
+          "RouteTableId": { "Ref": "DraiviPublicRouteTable" }
+        }
+      },
+      "DraiviPublicSubnet2RouteTableAssociation": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": { "Ref": "DraiviPublicSubnet2" },
+          "RouteTableId": { "Ref": "DraiviPublicRouteTable" }
+        }
+      },
+      "DraiviLambdaSecurityGroup": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "GroupDescription": "Security group for Lambda functions",
+          "SecurityGroupIngress": [],
+          "SecurityGroupEgress": [
+            {
+              "IpProtocol": "-1",
+              "CidrIp": "0.0.0.0/0"
+            }
+          ]
+        }
+      },
+      "DraiviRDSSecurityGroup": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "GroupDescription": "Security group for RDS",
+          "SecurityGroupIngress": [
+            {
+              "IpProtocol": "tcp",
+              "FromPort": "3306",
+              "ToPort": "3306",
+              "SourceSecurityGroupId": { "Ref": "DraiviBastionSecurityGroup" }
+            },
+            {
+              "IpProtocol": "tcp",
+              "FromPort": "3306",
+              "ToPort": "3306",
+              "SourceSecurityGroupId": { "Ref": "DraiviLambdaSecurityGroup" }
+            }
+          ],
+          "SecurityGroupEgress": [
+            {
+              "IpProtocol": "-1",
+              "CidrIp": "0.0.0.0/0"
+            }
+          ]
+        }
+      },
+      "DraiviBastionSecurityGroup": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+          "VpcId": { "Ref": "DraiviVPC" },
+          "GroupDescription": "Security group for Bastion host",
+          "SecurityGroupIngress": [
+            {
+              "IpProtocol": "tcp",
+              "FromPort": "22",
+              "ToPort": "22",
+              "CidrIp": "0.0.0.0/0"
+            }
+          ],
+          "SecurityGroupEgress": [
+            {
+              "IpProtocol": "-1",
+              "CidrIp": "0.0.0.0/0"
+            }
+          ]
+        }
+      },
+      "DraiviBastionHost": {
+        "Type": "AWS::EC2::Instance",
+        "Properties": {
+          "InstanceType": "t3.nano",
+          "KeyName": "rds-bastion-instance",
+          "ImageId": "ami-0e02b64cd4f1d0c69",
+          "SubnetId": { "Ref": "DraiviPublicSubnet1" },
+          "SecurityGroupIds": [
+            {
+              "Ref": "DraiviBastionSecurityGroup"
+            }
+          ]
+        }
+      },
+      "DraiviRDSInstance": {
+        "Type": "AWS::RDS::DBInstance",
+        "Properties": {
+          "AllocatedStorage": "20",
+          "DBInstanceClass": "db.t3.micro",
+          "Engine": "mysql",
+          "MasterUsername": "admin",
+          "ManageMasterUserPassword": true,
+          "DBName": "${self:provider.stage}Draivi",
+          "VPCSecurityGroups": [
+            {
+              "Ref": "DraiviRDSSecurityGroup"
+            }
+          ],
+          "DBSubnetGroupName": {
+            "Ref": "DraiviRDSSubnetGroup"
+          },
+          "BackupRetentionPeriod": 0,
+          "PubliclyAccessible": false,
+          "StorageType": "gp2"
+        }
+      },
+      "DraiviRDSSubnetGroup": {
+        "Type": "AWS::RDS::DBSubnetGroup",
+        "Properties": {
+          "DBSubnetGroupDescription": "Subnet group for RDS instance",
+          "SubnetIds": [
+            {
+              "Ref": "DraiviPrivateSubnet1"
+            },
+            {
+              "Ref": "DraiviPrivateSubnet2"
+            }
+          ]
+        }
+      },
+      "DraiviStaticWebsiteBucket": {
+        "Type": "AWS::S3::Bucket",
+        "DeletionPolicy": "Delete",
+        "Properties": {
+          "BucketName": "${self:custom.webBucketName}",
+          "WebsiteConfiguration": {
+            "IndexDocument": "index.html"
+          },
+          "OwnershipControls": {
+            "Rules": [
+              {
+                "ObjectOwnership": "ObjectWriter"
+              }
+            ]
+          },
+          "PublicAccessBlockConfiguration": {
+            "BlockPublicAcls": false
+          }
+        }
+      },
+      "DraiviBucketPolicy": {
+        "Type": "AWS::S3::BucketPolicy",
+        "Properties": {
+          "Bucket": {
+            "Ref": "DraiviStaticWebsiteBucket"
+          },
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:*",
+                "Resource": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      { "Ref": "DraiviStaticWebsiteBucket" },
+                      "/*"
+                    ]
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
